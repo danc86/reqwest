@@ -257,6 +257,59 @@ fn test_redirect_removes_sensitive_headers() {
 }
 
 #[test]
+fn test_redirect_propagates_cookies() {
+    let redirect = server! {
+        request: format!("\
+            GET /setcookie HTTP/1.1\r\n\
+            Host: $HOST\r\n\
+            User-Agent: $USERAGENT\r\n\
+            Accept: */*\r\n\
+            Accept-Encoding: gzip\r\n\
+            \r\n\
+            "),
+        response: format!("\
+            HTTP/1.1 302 See Other\r\n\
+            Server: test-redirect-with-cookie\r\n\
+            Set-Cookie: sessionid=123\r\n\
+            Content-Length: 0\r\n\
+            Location: /dst\r\n\
+            Connection: close\r\n\
+            \r\n\
+            "),
+
+        request: format!("\
+            GET /dst HTTP/1.1\r\n\
+            Host: $HOST\r\n\
+            User-Agent: $USERAGENT\r\n\
+            Accept: */*\r\n\
+            Accept-Encoding: gzip\r\n\
+            Referer: http://$HOST/setcookie\r\n\
+            Cookie: sessionid=123\r\n\
+            \r\n\
+            "),
+        response: b"\
+            HTTP/1.1 200 OK\r\n\
+            Server: test-dst\r\n\
+            Content-Length: 0\r\n\
+            \r\n\
+            "
+    };
+
+    let url = format!("http://{}/{}", redirect.addr(), "setcookie");
+    let dst = format!("http://{}/{}", redirect.addr(), "dst");
+    let res = reqwest::Client::builder()
+        .build()
+        .unwrap()
+        .get(&url)
+        .send()
+        .unwrap();
+    assert_eq!(res.url().as_str(), dst);
+    assert_eq!(res.status(), reqwest::StatusCode::Ok);
+    assert_eq!(res.headers().get(),
+                Some(&reqwest::header::Server::new("test-dst".to_string())));
+}
+
+#[test]
 fn test_redirect_policy_can_return_errors() {
     let server = server! {
         request: b"\

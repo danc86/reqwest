@@ -144,6 +144,7 @@
 //! [cookiejar_issue]: https://github.com/seanmonstar/reqwest/issues/14
 
 extern crate bytes;
+extern crate cookie;
 extern crate encoding_rs;
 #[macro_use]
 extern crate futures;

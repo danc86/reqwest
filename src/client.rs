@@ -5,6 +5,7 @@ use std::thread;
 
 use futures::{Future, Stream};
 use futures::sync::{mpsc, oneshot};
+use cookie::{CookieJar};
 
 use request::{self, Request, RequestBuilder};
 use response::{self, Response};
@@ -388,6 +389,7 @@ impl fmt::Debug for ClientBuilder {
 #[derive(Clone)]
 struct ClientHandle {
     timeout: Timeout,
+    cookie_jar: CookieJar,
     inner: Arc<InnerClientHandle>
 }
 
@@ -457,6 +459,7 @@ impl ClientHandle {
 
         Ok(ClientHandle {
             timeout: timeout,
+            cookie_jar: CookieJar::new(),
             inner: inner_handle,
         })
     }

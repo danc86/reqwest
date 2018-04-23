@@ -1,12 +1,13 @@
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
+use cookie::{Cookie, CookieJar};
 use futures::{Async, Future, Poll};
 use hyper::client::FutureResponse;
 use hyper::header::{Headers, Location, Referer, UserAgent, Accept, Encoding,
-                    AcceptEncoding, Range, qitem};
+                    AcceptEncoding, Range, Cookie as CookieHeader, SetCookie, qitem};
 use native_tls::{TlsConnector, TlsConnectorBuilder};
 use tokio_core::reactor::Handle;
 
@@ -137,6 +138,7 @@ impl ClientBuilder {
 
         Ok(Client {
             inner: Arc::new(ClientRef {
+                cookie_jar: Mutex::new(CookieJar::new()),
                 gzip: config.gzip,
                 hyper: hyper_client,
                 headers: config.headers,
@@ -403,6 +405,8 @@ impl Client {
             headers.set(AcceptEncoding(vec![qitem(Encoding::Gzip)]));
         }
 
+        add_cookies_from_jar(&self.inner.cookie_jar, &mut headers);
+
         let uri = to_uri(&url);
         let mut req = ::hyper::Request::new(method.clone(), uri.clone());
         *req.headers_mut() = headers.clone();
@@ -455,6 +459,7 @@ impl fmt::Debug for ClientBuilder {
 }
 
 struct ClientRef {
+    cookie_jar: Mutex<CookieJar>,
     gzip: bool,
     headers: Headers,
     hyper: HyperClient,
@@ -508,6 +513,12 @@ impl Future for PendingRequest {
                 Async::Ready(res) => res,
                 Async::NotReady => return Ok(Async::NotReady),
             };
+            // XXX even on error?
+            if let Some(set_cookie) = res.headers().get::<SetCookie>() {
+                for cookie in set_cookie.iter().filter_map(|sc| Cookie::parse(sc.clone()).ok()) {
+                    self.client.cookie_jar.lock().unwrap().add(cookie);
+                }
+            }
             let should_redirect = match res.status() {
                 StatusCode::MovedPermanently |
                 StatusCode::Found |
@@ -551,6 +562,7 @@ impl Future for PendingRequest {
                             self.url = loc;
 
                             remove_sensitive_headers(&mut self.headers, &self.url, &self.urls);
+                            add_cookies_from_jar(&self.client.cookie_jar, &mut self.headers);
                             debug!("redirecting to {:?} '{}'", self.method, self.url);
                             let uri = to_uri(&self.url);
                             let mut req = ::hyper::Request::new(
@@ -617,6 +629,20 @@ fn make_referer(next: &Url, previous: &Url) -> Option<Referer> {
     let _ = referer.set_password(None);
     referer.set_fragment(None);
     Some(Referer::new(referer.into_string()))
+}
+
+fn add_cookies_from_jar(cookie_jar: &Mutex<CookieJar>, headers: &mut Headers) -> () {
+    let mut cookie_jar = cookie_jar.lock().unwrap();
+    let cookie_jar_entries: Vec<&Cookie> = cookie_jar.iter().collect();
+    if !cookie_jar_entries.is_empty() {
+        let mut cookie_header = CookieHeader::new();
+        for cookie in cookie_jar_entries {
+            // XXX check domain matching rules here
+            cookie_header.set(String::from(cookie.name()), String::from(cookie.value()));
+        }
+        // XXX merge with user-supplied Cookie header
+        headers.set(cookie_header);
+    }
 }
 
 // pub(crate)
